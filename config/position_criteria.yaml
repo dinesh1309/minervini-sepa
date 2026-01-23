@@ -1,0 +1,12 @@
+# Position Management Agent Configuration
+position_management:
+  # Profit Taking
+  partial_profit_trigger_pct: 20     # Sell 1/2 or 1/3 at 20-25% gain
+  
+  # Stop Adjustment
+  free_roll_trigger_multiple: 2      # Move stop to breakeven when profit > 2x initial risk
+  trailing_stop_ma_days: 20          # Trailing stop based on 20-day MA (for riding trends)
+  
+  # Exit Rules
+  heavy_volume_exit: true            # Exit if price breaks support on heavy volume
+  climax_run_exit: true              # Take profits into parabolic moves

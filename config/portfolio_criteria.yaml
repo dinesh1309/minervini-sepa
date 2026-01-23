@@ -1,0 +1,9 @@
+# Portfolio Review Agent Configuration
+portfolio_review:
+  # Feedback Loops
+  min_batting_average: 0.50          # Acceptable win rate
+  tighten_stops_below_win_rate: 0.40 # Reducing risk when trading poorly
+  
+  # Aggressiveness
+  pyramid_only_on_winners: true      # Only scale into winning positions
+  max_position_size_pct: 25          # Maximum allocation to a single stock (high conviction)

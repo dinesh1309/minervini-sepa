@@ -1,0 +1,12 @@
+# Risk Management Agent Configuration
+risk_management:
+  # Stop Loss
+  max_stop_loss_pct: 10              # Absolute hard stop at 10%
+  target_stop_loss_pct: 7            # Target stop loss around 5-8%
+  
+  # Sizing
+  max_portfolio_risk_per_trade: 2.0  # Risk no more than 1.0% - 2.0% of total equity per trade
+  
+  # Rules
+  no_averaging_down: true            # Strictly forbidden to add to losing positions
+  max_open_positions: 10             # Limit total exposure count

@@ -1,0 +1,13 @@
+# VCP Pattern Agent Configuration
+vcp_pattern:
+  # Contractions
+  min_contractions: 2                # Minimum number of contractions (T1, T2...)
+  max_first_contraction_pct: 35      # Deepest pullback shouldn't exceed 35% (unless bear market)
+  contraction_ratio: 0.5             # Successive contractions should be ~half the depth of prior
+  
+  # Volume Characteristics
+  volume_dry_up_threshold: 0.5       # Volume on pullback days < 50% of 50-day avg
+  
+  # Base Duration
+  base_length_days_min: 20           # Minimum base building period
+  base_length_days_max: 65           # Nominal max, can be longer

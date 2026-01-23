@@ -1,0 +1,13 @@
+# Fundamental Overlay Agent Configuration
+fundamentals:
+  # Earnings Power
+  min_eps_growth_yoy_pct: 20         # Minimum 20% EPS growth vs same quarter year ago
+  eps_acceleration_required: true     # Preference for sequential acceleration
+  min_revenue_growth_pct: 15          # Minimum 15% revenue growth
+  
+  # Quality
+  margin_expansion_required: true     # Net profit margins should be expanding
+  positive_earnings_surprise: true    # Look for beats on estimates
+  
+  # Institutional Sponsorship (proxy)
+  min_institutional_holding_pct: 10   # Minimum institutional ownership (if available)

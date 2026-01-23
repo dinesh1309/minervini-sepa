@@ -1,0 +1,11 @@
+# Entry Point Agent Configuration
+entry_point:
+  pivot_type: "tight_area_breakout"  # Looking for breakouts from tight consolidations
+  
+  # Confirmation
+  volume_expansion_multiplier: 1.5   # Breakout volume should be > 1.5x average volume
+  price_close_near_high: true        # Close should be in upper 50% of the day's range
+  
+  # Context
+  proximity_to_52w_high_pct: 15      # Breakout should occur within 15% of 52-week high
+  prefer_first_base: true            # Priority given to stocks emerging from 1st or 2nd base

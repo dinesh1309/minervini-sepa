@@ -1,0 +1,12 @@
+# Trend Template Agent Configuration
+trend_template:
+  # Reference: Mark Minervini's Trend Template 8-point criteria
+  price_above_150_sma: true
+  price_above_200_sma: true
+  sma_150_above_200: true
+  sma_200_trending_up_months: 1      # 200-day MA trending up for at least 1 month
+  sma_50_above_150_and_200: true
+  price_above_50_sma: true
+  price_above_52w_low_pct: 30        # Price at least 30% above 52-week low
+  price_within_52w_high_pct: 25      # Price within 25% of 52-week high
+  rs_ranking_minimum: 70             # Relative Strength Ranking (0-100)
