@@ -550,7 +550,89 @@ def main():
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(md)
 
-        print(f"\nSaved to: {filepath}")
+        print(f"\nSaved scan to: {filepath}")
+
+        # Update market condition log in vault
+        update_market_condition_log(Path(vault_path), index_results, timestamp)
+
+
+def update_market_condition_log(vault_path, index_results, timestamp):
+    """Update the vault market-condition-log.md with latest scan data."""
+    log_path = vault_path / "trading" / "market-conditions" / "market-condition-log.md"
+
+    if not log_path.exists():
+        print("WARNING: market-condition-log.md not found in vault")
+        return
+
+    content = log_path.read_text(encoding="utf-8")
+    date_str = timestamp[:10]
+
+    # Find India and US index results
+    india_idx = next((i for i in index_results if "Nifty" in i.get("name", "")), None)
+    us_idx = next((i for i in index_results if "S&P" in i.get("name", "")), None)
+
+    # Build the new Current Status section
+    if india_idx and "error" not in india_idx:
+        condition_emoji = {"UPTREND": "Confirmed Uptrend", "CAUTION": "Uptrend Under Pressure",
+                          "WATCHING": "Rally Attempt", "DOWNTREND": "Downtrend"}.get(
+                          india_idx.get("condition", ""), india_idx.get("condition", ""))
+
+        rally_str = f" (Day {india_idx['rally_attempt_day']})" if india_idx.get("rally_attempt_day") else ""
+        ftd_str = " | FTD DETECTED" if india_idx.get("ftd_detected") else ""
+
+        new_status = f"""## Current Status
+
+**As of {date_str} (auto-scan):** {condition_emoji}{rally_str}{ftd_str}
+**Nifty Close:** {india_idx['price']}
+**SMA 50:** {india_idx['sma50']} | **SMA 200:** {india_idx['sma200']}
+**Distribution Days (25 sessions):** {india_idx.get('distribution_days', '—')}
+**Details:** {india_idx.get('details', '—')}
+**Action Mode:** {'Buy breakouts with progressive exposure' if 'UPTREND' in india_idx.get('condition_raw', '') else 'No new positions' if india_idx.get('condition_raw') == 'DOWNTREND' else 'Wait for FTD' if india_idx.get('condition_raw') == 'RALLY_ATTEMPT' else 'Reduce exposure, tighten stops'}
+
+> [!warning] Market Condition Gate
+> No new positions in Downtrend or Rally Attempt without FTD confirmation."""
+
+        # Replace existing Current Status section
+        import re
+        pattern = r"## Current Status.*?(?=\n---)"
+        content = re.sub(pattern, new_status, content, flags=re.DOTALL)
+
+    # Append to India history table
+    if india_idx and "error" not in india_idx:
+        condition_icon = {"UPTREND": "UPTREND", "CAUTION": "CAUTION",
+                         "WATCHING": "WATCHING", "DOWNTREND": "DOWNTREND"}.get(
+                         india_idx.get("condition", ""), "?")
+        rally_note = f" Day {india_idx['rally_attempt_day']}" if india_idx.get("rally_attempt_day") else ""
+        new_row = f"| {date_str} | {condition_icon}{rally_note} | {india_idx['price']} | Auto-scan: {india_idx.get('distribution_days', 0)} dist days. {india_idx.get('details', '')[:80]} | — |"
+
+        # Check if this date already exists in the history
+        if date_str not in content.split("## History")[1].split("## US Market")[0] if "## History" in content else "":
+            # Insert before the --- after history table
+            history_end = content.find("\n---\n", content.find("## History"))
+            if history_end > 0:
+                content = content[:history_end] + "\n" + new_row + content[history_end:]
+
+    # Update US Market Status section
+    if us_idx and "error" not in us_idx:
+        us_condition = {"UPTREND": "Confirmed Uptrend", "CAUTION": "Uptrend Under Pressure",
+                       "WATCHING": "Rally Attempt", "DOWNTREND": "Downtrend"}.get(
+                       us_idx.get("condition", ""), us_idx.get("condition", ""))
+
+        us_new_row = f"| {date_str} | {us_idx['condition']} | {us_idx['price']} | Auto-scan: {us_idx.get('distribution_days', 0)} dist days. SMA50: {us_idx['sma50']}, SMA200: {us_idx['sma200']} | — |"
+
+        # Append to US history if date not already there
+        us_history_section = content.split("### US Market Condition History")[1] if "### US Market Condition History" in content else ""
+        if date_str not in us_history_section:
+            # Find the end of US history table
+            us_note_pos = content.find("### Note on Micron")
+            if us_note_pos < 0:
+                us_note_pos = content.rfind("\n---\n")
+            if us_note_pos > 0:
+                content = content[:us_note_pos] + us_new_row + "\n\n" + content[us_note_pos:]
+
+    # Write back
+    log_path.write_text(content, encoding="utf-8")
+    print(f"Updated market condition log: {log_path}")
 
 
 if __name__ == "__main__":
