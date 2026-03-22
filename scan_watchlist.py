@@ -19,6 +19,7 @@ from src.tools.market_data import get_stock_data
 from src.tools.technical_analysis import calculate_moving_averages, check_trend_template
 from src.tools.pattern_detection import detect_vcp, identify_pivot
 from src.tools.market_condition import detect_market_condition, format_condition_emoji
+from src.alerts.discord_alerts import send_scan_alerts
 import yfinance as yf
 
 # Dinesh's 10 watchlist stocks
@@ -464,6 +465,7 @@ def format_results(index_results, stock_results, timestamp):
 def main():
     parser = argparse.ArgumentParser(description="Scan Dinesh's watchlist stocks")
     parser.add_argument("--save-vault", action="store_true", help="Save results to PVD vault")
+    parser.add_argument("--alerts", action="store_true", help="Send alerts to Discord")
     parser.add_argument("--vault-path", default=None, help="Path to PVD vault (auto-detected if not set)")
     args = parser.parse_args()
 
@@ -554,6 +556,12 @@ def main():
 
         # Update market condition log in vault
         update_market_condition_log(Path(vault_path), index_results, timestamp)
+
+    # Send Discord alerts
+    if args.alerts:
+        print("\nSending Discord alerts...")
+        sent = send_scan_alerts(index_results, stock_results, timestamp)
+        print(f"Sent {sent} alerts to Discord")
 
 
 def update_market_condition_log(vault_path, index_results, timestamp):

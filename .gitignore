@@ -36,3 +36,4 @@ data/scan_results/
 
 # Jupyter
 .ipynb_checkpoints/
+.env
