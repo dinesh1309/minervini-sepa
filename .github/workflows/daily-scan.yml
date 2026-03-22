@@ -1,0 +1,52 @@
+name: SEPA Daily Scanner
+
+on:
+  schedule:
+    # India market close: 4:15 PM IST = 10:45 AM UTC
+    - cron: '45 10 * * 1-5'
+    # US market close: 2:00 AM IST = 8:30 PM UTC (previous day)
+    - cron: '30 20 * * 1-5'
+  workflow_dispatch:  # Manual trigger from GitHub UI
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout scanner code
+        uses: actions/checkout@v4
+
+      - name: Checkout vault repo
+        uses: actions/checkout@v4
+        with:
+          repository: dinesh1309/pvd-vault
+          token: ${{ secrets.VAULT_PAT }}
+          path: vault
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install yfinance pandas numpy ta pyyaml requests
+
+      - name: Run watchlist scan
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PVD_VAULT_PATH: ${{ github.workspace }}/vault
+        run: python scan_watchlist.py --save-vault --alerts
+
+      - name: Commit scan results to vault
+        run: |
+          cd vault
+          git config user.name "SEPA Scanner Bot"
+          git config user.email "scanner@bot.local"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Auto-scan: $(date -u +%Y-%m-%d) market condition + watchlist"
+            git push
+          fi
