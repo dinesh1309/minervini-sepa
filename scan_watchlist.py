@@ -18,6 +18,7 @@ sys.path.insert(0, '.')
 from src.tools.market_data import get_stock_data
 from src.tools.technical_analysis import calculate_moving_averages, check_trend_template
 from src.tools.pattern_detection import detect_vcp, identify_pivot
+from src.tools.market_condition import detect_market_condition, format_condition_emoji
 import yfinance as yf
 
 # Dinesh's 10 watchlist stocks
@@ -248,37 +249,31 @@ def scan_stock(symbol, name, market, pivot=None, stop=None, benchmark_df=None):
 
 
 def scan_index(symbol, name):
-    """Scan an index for market condition signals."""
+    """Scan an index for market condition using Minervini 4-condition model."""
     df = get_stock_data(symbol, period='1y', auto_suffix=False)
 
     if df is None or df.empty:
         return {"symbol": symbol, "name": name, "error": "No data"}
 
-    df = calculate_moving_averages(df, [50, 150, 200])
-
-    last_close = float(df['Close'].iloc[-1])
-    sma50 = float(df['SMA_50'].iloc[-1])
-    sma200 = float(df['SMA_200'].iloc[-1])
-
-    # Simple market condition heuristic
-    if last_close > sma50 and sma50 > sma200:
-        condition = "LIKELY UPTREND"
-    elif last_close > sma200 and last_close < sma50:
-        condition = "UNDER PRESSURE"
-    elif last_close < sma200:
-        condition = "LIKELY DOWNTREND"
-    else:
-        condition = "UNCERTAIN"
+    mc = detect_market_condition(df, index_name=name)
 
     return {
         "symbol": symbol,
         "name": name,
-        "price": round(last_close, 2),
-        "sma50": round(sma50, 2),
-        "sma200": round(sma200, 2),
-        "price_vs_sma50": "ABOVE" if last_close > sma50 else "BELOW",
-        "price_vs_sma200": "ABOVE" if last_close > sma200 else "BELOW",
-        "condition": condition,
+        "price": mc.index_close,
+        "as_of": mc.as_of,
+        "sma50": mc.sma_50,
+        "sma200": mc.sma_200,
+        "price_vs_sma50": "ABOVE" if mc.above_50 else "BELOW",
+        "price_vs_sma200": "ABOVE" if mc.above_200 else "BELOW",
+        "condition": format_condition_emoji(mc.condition),
+        "condition_raw": mc.condition,
+        "confidence": mc.confidence,
+        "distribution_days": mc.distribution_days_25,
+        "rally_attempt_day": mc.rally_attempt_day,
+        "ftd_detected": mc.ftd_detected,
+        "ftd_date": mc.ftd_date,
+        "details": mc.details,
     }
 
 
@@ -300,13 +295,23 @@ def format_results(index_results, stock_results, timestamp):
     # Market Conditions
     lines.append("## Market Conditions")
     lines.append("")
-    lines.append("| Index | Price | SMA 50 | SMA 200 | vs 50 | vs 200 | Condition |")
-    lines.append("|-------|-------|--------|---------|-------|--------|-----------|")
+    lines.append("> [!warning] Market Condition Gate")
+    lines.append("> No new positions in Downtrend or Rally Attempt without FTD confirmation.")
+    lines.append("")
+    lines.append("| Index | Price | SMA 50 | SMA 200 | Condition | Confidence | Dist Days | Rally Day | FTD? |")
+    lines.append("|-------|-------|--------|---------|-----------|------------|-----------|-----------|------|")
     for idx in index_results:
         if "error" in idx:
-            lines.append(f"| {idx['name']} | ERROR | — | — | — | — | — |")
+            lines.append(f"| {idx['name']} | ERROR | — | — | — | — | — | — | — |")
         else:
-            lines.append(f"| {idx['name']} | {idx['price']} | {idx['sma50']} | {idx['sma200']} | {idx['price_vs_sma50']} | {idx['price_vs_sma200']} | {idx['condition']} |")
+            ftd = "YES" if idx.get('ftd_detected') else "NO"
+            rally = idx.get('rally_attempt_day', 0) or "—"
+            lines.append(f"| {idx['name']} | {idx['price']} | {idx['sma50']} | {idx['sma200']} | {idx['condition']} | {idx.get('confidence', '—')} | {idx.get('distribution_days', '—')} | {rally} | {ftd} |")
+
+    # Detailed condition analysis
+    for idx in index_results:
+        if "error" not in idx and idx.get("details"):
+            lines.append(f"\n**{idx['name']}:** {idx['details']}")
     lines.append("")
 
     # Stock Results
