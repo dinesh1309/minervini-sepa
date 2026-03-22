@@ -6,7 +6,7 @@ to identify stocks in confirmed Stage 2 uptrends.
 """
 
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from .base_agent import BaseAgent, ToolDefinition, AgentResult, get_ai_client
 from ..tools import (
@@ -15,6 +15,7 @@ from ..tools import (
     get_nifty50_stocks,
     get_batch_stock_data
 )
+from ..tools.technical_analysis import calculate_rs_ranking_universe
 from ..utils.config_loader import ConfigLoader
 
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +33,7 @@ class TrendTemplateAgent(BaseAgent):
     4. 200-day SMA trending up (1+ months)
     5. 50-day SMA above 150 and 200
     6. Price above 50-day SMA
-    7. Price 30%+ above 52-week low
+    7. Price 25%+ above 52-week low
     8. Price within 25% of 52-week high
     """
     
@@ -104,7 +105,7 @@ Your task is to analyze stocks against the 8-point Trend Template criteria:
 4. 200-day SMA trending up for at least 1 month
 5. 50-day SMA above both 150 and 200-day SMAs
 6. Current price above 50-day SMA
-7. Price at least 30% above 52-week low
+7. Price at least 25% above 52-week low
 8. Price within 25% of 52-week high
 
 For each stock, use the available tools to:
@@ -118,34 +119,82 @@ Return a structured JSON response with:
     "summary": "Brief summary of results"
 }"""
     
+    def _compute_rs_rankings(self, stock_data: Dict[str, any]) -> Dict[str, int]:
+        """
+        Compute RS percentile rankings for all stocks in the universe.
+
+        Uses 52-week price returns to rank stocks against each other,
+        producing a true percentile-based RS ranking (0-100).
+
+        Args:
+            stock_data: Dictionary mapping symbol -> DataFrame
+
+        Returns:
+            Dictionary mapping symbol -> RS percentile (0-100)
+        """
+        stock_returns = {}
+        lookback = 252  # ~52 weeks of trading days
+
+        for symbol, df in stock_data.items():
+            try:
+                available = min(lookback, len(df))
+                if available < 20:  # Need at least ~1 month of data
+                    continue
+                start_price = df['Close'].iloc[-available]
+                end_price = df['Close'].iloc[-1]
+                if start_price > 0:
+                    stock_returns[symbol] = ((end_price - start_price) / start_price) * 100
+            except Exception:
+                continue
+
+        return calculate_rs_ranking_universe(stock_returns)
+
     def analyze_stocks(self, symbols: List[str]) -> AgentResult:
         """
         Analyze a list of stocks against the Trend Template.
-        
+
         Args:
             symbols: List of stock symbols to analyze
-        
+
         Returns:
             AgentResult with passed and failed stocks
         """
         passed = []
         failed = []
-        
+
+        # Pre-fetch all stock data and compute universe-wide RS rankings
+        stock_data = {}
         for symbol in symbols:
             try:
-                # Get stock data
                 df = get_stock_data(symbol, period="2y")
-                
-                if df is None or len(df) < 200:
+                if df is not None and len(df) >= 200:
+                    stock_data[symbol] = df
+            except Exception as e:
+                logger.error(f"Error fetching data for {symbol}: {e}")
+
+        # Compute RS percentile rankings across the entire universe
+        rs_rankings = self._compute_rs_rankings(stock_data)
+        logger.info(f"Computed RS rankings for {len(rs_rankings)} stocks")
+
+        for symbol in symbols:
+            try:
+                if symbol not in stock_data:
                     failed.append({
                         "symbol": symbol,
                         "failed_criteria": ["insufficient_data"]
                     })
                     continue
-                
-                # Check trend template
-                results = check_trend_template(df, config=self.config)
-                
+
+                df = stock_data[symbol]
+                rs_pct = rs_rankings.get(symbol)
+                low_cheat = self.config.get('low_cheat_enabled', False)
+
+                # Check trend template with pre-computed RS percentile
+                results = check_trend_template(
+                    df, config=self.config, rs_percentile=rs_pct,
+                    low_cheat=low_cheat
+                )
+
                 if results.get("all_passed", False):
                     passed.append({
                         "symbol": symbol,
@@ -162,7 +211,7 @@ Return a structured JSON response with:
                         "failed_criteria": failed_checks,
                         "passed_count": results.get("passed_count", 0)
                     })
-                    
+
             except Exception as e:
                 logger.error(f"Error analyzing {symbol}: {e}")
                 failed.append({

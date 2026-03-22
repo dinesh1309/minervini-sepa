@@ -209,6 +209,86 @@ def calculate_rs_ranking_universe(
     return rankings
 
 
+def check_rs_line_trend(
+    stock_df: pd.DataFrame,
+    benchmark_df: pd.DataFrame,
+    min_uptrend_weeks: int = 6
+) -> Dict[str, any]:
+    """
+    Check RS line trend direction per Minervini's workbook notes:
+    - RS line should NOT be in a strong downtrend
+    - Prefer RS line in an uptrend for at least 6 weeks, preferably 13+ weeks
+
+    The RS line is computed as stock_price / benchmark_price.
+
+    Args:
+        stock_df: Stock price DataFrame
+        benchmark_df: Benchmark price DataFrame
+        min_uptrend_weeks: Minimum weeks the RS line should be trending up (default 6)
+
+    Returns:
+        Dictionary with:
+        - rs_not_downtrending: bool (True if RS line is NOT in a strong downtrend)
+        - rs_uptrend_weeks: int (number of weeks RS line has been in an uptrend)
+        - rs_uptrend_sufficient: bool (True if uptrend >= min_uptrend_weeks)
+    """
+    result = {
+        'rs_not_downtrending': True,
+        'rs_uptrend_weeks': 0,
+        'rs_uptrend_sufficient': False
+    }
+
+    if stock_df is None or benchmark_df is None:
+        return result
+    if stock_df.empty or benchmark_df.empty:
+        return result
+
+    # Align dates between stock and benchmark
+    common_dates = stock_df.index.intersection(benchmark_df.index)
+    if len(common_dates) < 30:  # Need at least ~6 weeks of data
+        return result
+
+    stock_close = stock_df.loc[common_dates, 'Close']
+    bench_close = benchmark_df.loc[common_dates, 'Close']
+
+    # Compute RS line (stock / benchmark ratio)
+    rs_line = stock_close / bench_close
+
+    # Smooth the RS line with a 5-day MA to reduce noise
+    rs_smoothed = rs_line.rolling(window=5).mean().dropna()
+
+    if len(rs_smoothed) < 30:
+        return result
+
+    # Check 1: RS line should NOT be in a strong downtrend
+    # Look at the last 13 weeks (~65 trading days) for overall direction
+    lookback_13w = min(65, len(rs_smoothed))
+    rs_start_13w = rs_smoothed.iloc[-lookback_13w]
+    rs_end = rs_smoothed.iloc[-1]
+    pct_change_13w = ((rs_end - rs_start_13w) / rs_start_13w) * 100
+
+    # Strong downtrend = RS line declined more than 10% over 13 weeks
+    rs_not_downtrending = pct_change_13w > -10.0
+
+    # Check 2: Count consecutive weeks of RS line uptrend
+    # Resample to weekly and check consecutive positive changes
+    weekly_rs = rs_smoothed.resample('W').last().dropna()
+    weekly_changes = weekly_rs.diff().dropna()
+
+    uptrend_weeks = 0
+    for change in reversed(weekly_changes.values):
+        if change > 0:
+            uptrend_weeks += 1
+        else:
+            break
+
+    result['rs_not_downtrending'] = rs_not_downtrending
+    result['rs_uptrend_weeks'] = uptrend_weeks
+    result['rs_uptrend_sufficient'] = uptrend_weeks >= min_uptrend_weeks
+
+    return result
+
+
 def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """
     Calculate Average True Range (ATR).
@@ -265,16 +345,22 @@ def calculate_volume_metrics(df: pd.DataFrame) -> Dict[str, float]:
 def check_trend_template(
     df: pd.DataFrame,
     benchmark_df: Optional[pd.DataFrame] = None,
-    config: Optional[Dict] = None
+    config: Optional[Dict] = None,
+    rs_percentile: Optional[float] = None,
+    low_cheat: bool = False
 ) -> Dict[str, any]:
     """
     Check all 8 points of Minervini's Trend Template.
-    
+
     Args:
         df: Stock price DataFrame
-        benchmark_df: Benchmark for RS calculation (optional)
+        benchmark_df: Benchmark for RS calculation (optional, used only if rs_percentile not provided)
         config: Trend template criteria from config file
-    
+        rs_percentile: Pre-computed RS percentile ranking (0-100) from universe-wide ranking.
+                       If provided, this is used instead of the simplified benchmark comparison.
+        low_cheat: If True, exempts criterion 8 (price above 50-DMA) for "Low Cheat" setups
+                   where the stock is pulling back to a rising 50-day MA.
+
     Returns:
         Dictionary with results for each criterion and overall pass/fail
     """
@@ -287,7 +373,7 @@ def check_trend_template(
             'sma_200_trending_up_months': 1,
             'sma_50_above_150_and_200': True,
             'price_above_50_sma': True,
-            'price_above_52w_low_pct': 30,
+            'price_above_52w_low_pct': 25,
             'price_within_52w_high_pct': 25,
             'rs_ranking_minimum': 70
         }
@@ -332,12 +418,25 @@ def check_trend_template(
     }
     
     # Check 4: 200-day SMA trending up
-    lookback = config.get('sma_200_trending_up_months', 1) * 21
+    # Resolve template variant to lookback months
+    variant_months = {
+        '1_month': 1,
+        '4_month': 4,
+        '5_month': 5,
+    }
+    template_variant = config.get('template_variant')
+    if template_variant and template_variant in variant_months:
+        trending_months = variant_months[template_variant]
+    else:
+        trending_months = config.get('sma_200_trending_up_months', 1)
+
+    lookback = trending_months * 21  # ~21 trading days per month
     trend = get_sma_trend_direction(df, sma_period=200, lookback_days=lookback)
     check_4 = trend == "UP"
+    variant_label = f" [{template_variant}]" if template_variant else ""
     results['checks']['sma_200_trending_up'] = {
         'passed': check_4,
-        'value': f"Trend: {trend}"
+        'value': f"Trend: {trend} (lookback: {trending_months} months{variant_label})"
     }
     
     # Check 5: 50-day SMA above 150 and 200
@@ -347,15 +446,24 @@ def check_trend_template(
         'value': f"SMA50: {sma_50:.2f}"
     }
     
-    # Check 6: Price above 50-day SMA
-    check_6 = current_price > sma_50
-    results['checks']['price_above_50_sma'] = {
-        'passed': check_6,
-        'value': f"Price: {current_price:.2f}, SMA50: {sma_50:.2f}"
-    }
+    # Check 6: Price above 50-day SMA (exception: "Low Cheat" setups)
+    price_above_50 = current_price > sma_50
+    if low_cheat and not price_above_50:
+        # Low Cheat exception: price can be at or slightly below 50-DMA
+        check_6 = True
+        results['checks']['price_above_50_sma'] = {
+            'passed': True,
+            'value': f"Price: {current_price:.2f}, SMA50: {sma_50:.2f} (Low Cheat exception applied)"
+        }
+    else:
+        check_6 = price_above_50
+        results['checks']['price_above_50_sma'] = {
+            'passed': check_6,
+            'value': f"Price: {current_price:.2f}, SMA50: {sma_50:.2f}"
+        }
     
     # Check 7: Price at least X% above 52-week low
-    min_above_low = config.get('price_above_52w_low_pct', 30)
+    min_above_low = config.get('price_above_52w_low_pct', 25)
     check_7 = metrics_52w.get('pct_above_low', 0) >= min_above_low
     results['checks']['price_above_52w_low'] = {
         'passed': check_7,
@@ -371,27 +479,69 @@ def check_trend_template(
     }
     
     # Check 9 (Optional): RS Ranking
-    if benchmark_df is not None:
+    min_rs = config.get('rs_ranking_minimum', 70)
+    if rs_percentile is not None:
+        # Use pre-computed universe-wide percentile ranking (preferred method)
+        check_9 = rs_percentile >= min_rs
+        results['checks']['rs_ranking'] = {
+            'passed': check_9,
+            'value': f"RS Percentile: {rs_percentile:.1f} (need {min_rs})"
+        }
+    elif benchmark_df is not None:
+        # Fallback: simplified benchmark comparison
         rs = get_relative_strength(df, benchmark_df)
-        min_rs = config.get('rs_ranking_minimum', 70)
         check_9 = rs >= min_rs
         results['checks']['rs_ranking'] = {
             'passed': check_9,
-            'value': f"RS: {rs:.1f} (need {min_rs})"
+            'value': f"RS (vs benchmark): {rs:.1f} (need {min_rs})"
         }
     else:
-        check_9 = True  # Skip if no benchmark
+        check_9 = True  # Skip if no benchmark and no percentile
         results['checks']['rs_ranking'] = {
+            'passed': True,
+            'value': "Skipped (no benchmark or universe data)"
+        }
+    
+    # Check 10 (Additional): RS line NOT in a strong downtrend
+    # Check 11 (Additional): RS line uptrend duration (preferably 6+ weeks, ideally 13+)
+    if benchmark_df is not None:
+        min_rs_uptrend_weeks = config.get('rs_line_min_uptrend_weeks', 6)
+        rs_trend = check_rs_line_trend(df, benchmark_df, min_uptrend_weeks=min_rs_uptrend_weeks)
+
+        check_10 = rs_trend['rs_not_downtrending']
+        results['checks']['rs_line_not_downtrending'] = {
+            'passed': check_10,
+            'value': f"RS line not in strong downtrend: {check_10}"
+        }
+
+        check_11 = rs_trend['rs_uptrend_sufficient']
+        results['checks']['rs_line_uptrend'] = {
+            'passed': check_11,
+            'value': f"RS uptrend: {rs_trend['rs_uptrend_weeks']} weeks (need {min_rs_uptrend_weeks})"
+        }
+    else:
+        check_10 = True  # Skip if no benchmark
+        check_11 = True
+        results['checks']['rs_line_not_downtrending'] = {
             'passed': True,
             'value': "Skipped (no benchmark)"
         }
-    
+        results['checks']['rs_line_uptrend'] = {
+            'passed': True,
+            'value': "Skipped (no benchmark)"
+        }
+
     # Overall result
-    all_checks = [check_1, check_2, check_3, check_4, check_5, check_6, check_7, check_8, check_9]
+    # Core 8 criteria (checks 1-9 map to workbook criteria 1-8, with RS ranking)
+    # + RS line trend checks (10-11) from additional workbook notes
+    all_checks = [
+        check_1, check_2, check_3, check_4, check_5, check_6,
+        check_7, check_8, check_9, check_10, check_11
+    ]
     results['all_passed'] = all(all_checks)
     results['passed_count'] = sum(all_checks)
     results['total_checks'] = len(all_checks)
-    
+
     return results
 
 

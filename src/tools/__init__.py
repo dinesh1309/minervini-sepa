@@ -24,6 +24,8 @@ from .technical_analysis import (
     get_sma_trend_direction,
     calculate_52_week_metrics,
     get_relative_strength,
+    calculate_rs_ranking_universe,
+    check_rs_line_trend,
     calculate_atr,
     calculate_volume_metrics,
     check_trend_template
@@ -72,6 +74,8 @@ __all__ = [
     'get_sma_trend_direction',
     'calculate_52_week_metrics',
     'get_relative_strength',
+    'calculate_rs_ranking_universe',
+    'check_rs_line_trend',
     'calculate_atr',
     'calculate_volume_metrics',
     'check_trend_template',

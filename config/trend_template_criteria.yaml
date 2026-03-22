@@ -4,9 +4,18 @@ trend_template:
   price_above_150_sma: true
   price_above_200_sma: true
   sma_150_above_200: true
-  sma_200_trending_up_months: 1      # 200-day MA trending up for at least 1 month
+  sma_200_trending_up_months: 1      # 200-day MA trending up for at least 1 month (overridden by template_variant)
   sma_50_above_150_and_200: true
   price_above_50_sma: true
-  price_above_52w_low_pct: 30        # Price at least 30% above 52-week low
+  price_above_52w_low_pct: 25        # Price at least 25% above 52-week low (per Minervini workbook)
   price_within_52w_high_pct: 25      # Price within 25% of 52-week high
   rs_ranking_minimum: 70             # Relative Strength Ranking (0-100)
+  rs_line_min_uptrend_weeks: 6       # RS line should be in uptrend for at least 6 weeks (preferably 13+)
+  low_cheat_enabled: false           # Enable "Low Cheat" exception (price can be below 50-DMA)
+
+  # Trend Template Variations (per Minervini workbook):
+  #   "1_month"   — Power Play setups and early turns (200-DMA trending up 1 month)
+  #   "4_month"   — Intermediate confirmation (200-DMA trending up 4 months)
+  #   "5_month"   — Established uptrends (200-DMA trending up 5 months)
+  # When set, this overrides sma_200_trending_up_months above.
+  template_variant: "1_month"

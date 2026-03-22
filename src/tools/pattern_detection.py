@@ -234,18 +234,38 @@ def detect_vcp(
             valid_ratio = False
             break
     
-    # Check for progressively smaller contractions
-    decreasing = all(
-        contractions[i].depth_pct < contractions[i-1].depth_pct
-        for i in range(1, len(contractions))
-    )
-    
-    # Check volume dry-up
+    # MINERVINI RULE: Check for progressively smaller contractions
+    # Each contraction MUST be smaller than the previous one.
+    # Allow some tolerance (up to 1.2x previous — not strict 50% but must trend down)
+    decreasing = True
+    decreasing_count = 0
+    increasing_count = 0
+    for i in range(1, len(contractions)):
+        if contractions[i].depth_pct < contractions[i-1].depth_pct:
+            decreasing_count += 1
+        else:
+            increasing_count += 1
+            decreasing = False
+
+    # Check if OVERALL trend is contracting (last < first, even if not every step)
+    overall_contracting = False
+    if len(contractions) >= 2:
+        overall_contracting = contractions[-1].depth_pct < contractions[0].depth_pct
+
+    # MINERVINI RULE: Volume should decrease with contractions
+    volume_decreasing = True
+    if len(contractions) >= 2:
+        for i in range(1, len(contractions)):
+            if contractions[i].avg_volume > contractions[i-1].avg_volume * 1.2:
+                volume_decreasing = False
+                break
+
+    # Check overall volume dry-up
     volume_dry, volume_ratio = check_volume_dry_up(
-        df, 
+        df,
         threshold=config['volume_dry_up_threshold']
     )
-    
+
     # Calculate base length
     if contractions:
         base_start = contractions[0].start_idx
@@ -253,37 +273,65 @@ def detect_vcp(
         base_length = base_end - base_start
     else:
         base_length = 0
-    
-    # Determine pivot price (resistance at the tightest area)
+
+    # Determine pivot price (resistance at the tightest contraction)
     pivot_price = 0.0
     if contractions:
-        # Use the high of the most recent contraction
-        pivot_price = contractions[-1].high
-    
-    # Calculate quality score
+        # Pivot = high of the tightest (smallest depth) contraction
+        tightest = min(contractions, key=lambda c: c.depth_pct)
+        pivot_price = tightest.high
+
+    # Calculate quality score (Minervini-strict)
+    #
+    # VCP SCORING:
+    #   GATE (must pass all to be valid):
+    #     - 2+ contractions
+    #     - First contraction <= 35%
+    #     - Overall contracting (last depth < first depth)
+    #   QUALITY (determines score):
+    #     30 pts: Every contraction smaller than previous (strict decreasing)
+    #     20 pts: Overall contracting (last < first, even if not every step)
+    #     20 pts: Volume decreasing across contractions
+    #     15 pts: Volume dried up (recent < 50% of 50-day avg)
+    #     15 pts: Base length in valid range (20-65 days)
+    #
     score = 0.0
-    if len(contractions) >= config['min_contractions']:
-        score += 30  # Base score for having contractions
-        
+    has_min_contractions = len(contractions) >= config['min_contractions']
+    first_depth_ok = contractions[0].depth_pct <= config['max_first_contraction_pct'] if contractions else False
+
+    if has_min_contractions and first_depth_ok:
         if decreasing:
-            score += 25  # Progressively smaller contractions
-        
+            score += 30  # Strict: every contraction smaller
+        elif overall_contracting:
+            score += 20  # Looser: last < first overall
+
+        if volume_decreasing:
+            score += 20  # Volume tightening with price
+
         if volume_dry:
-            score += 25  # Volume dried up
-        
+            score += 15  # Recent volume dried up
+
         if config['base_length_days_min'] <= base_length <= config['base_length_days_max']:
-            score += 20  # Good base length
-    
-    # Determine validity
+            score += 15  # Good base length
+
+    # VALIDITY: Must have gate conditions + minimum score
     is_valid = (
-        len(contractions) >= config['min_contractions'] and
-        contractions[0].depth_pct <= config['max_first_contraction_pct'] and
-        score >= 50  # Minimum quality threshold
+        has_min_contractions and
+        first_depth_ok and
+        overall_contracting and  # GATE: must be contracting overall
+        score >= 40
     )
-    
+
     details = f"{len(contractions)} contractions, "
-    details += f"depths: {[c.depth_pct for c in contractions]}, "
-    details += f"volume ratio: {volume_ratio}, "
+    details += f"depths: {[round(float(c.depth_pct), 1) for c in contractions]}, "
+    if decreasing:
+        details += "strictly decreasing, "
+    elif overall_contracting:
+        details += "overall contracting (not strict), "
+    else:
+        details += "NOT contracting, "
+    details += f"vol {'decreasing' if volume_decreasing else 'NOT decreasing'}, "
+    details += f"vol ratio: {volume_ratio}, "
     details += f"base: {base_length} days"
     
     return VCPPattern(
