@@ -1,0 +1,44 @@
+# Data Source Configuration
+# Provider priority: lower number = tried first
+# Configure per data type AND per market for maximum flexibility
+
+providers:
+  yfinance:
+    enabled: true
+    priority:
+      ohlcv: 1
+      fundamentals: 1
+      stock_list_india: 1
+      stock_list_us: 99  # yfinance doesn't provide US stock lists
+    config:
+      rate_limit_seconds: 0.5
+      batch_size: 500
+
+  # OpenBB — DEFERRED (eng review decision)
+  # Uncomment and configure when ready to add:
+  # openbb:
+  #   enabled: false
+  #   priority:
+  #     ohlcv: 2
+  #     fundamentals: 1  # OpenBB is better for fundamentals
+  #     stock_list_india: 2
+  #     stock_list_us: 2
+  #   config:
+  #     api_keys:
+  #       eodhd: ""
+  #       polygon: ""
+
+cache:
+  enabled: true
+  directory: "data/cache"
+  expiry:
+    ohlcv_days: 1
+    fundamentals_days: 7
+    stock_list_days: 1
+
+# Canonical OHLCV schema (for reference — enforced in provider.py)
+schema:
+  ohlcv:
+    columns: ["open", "high", "low", "close", "volume", "adj_close"]
+    index: "DatetimeIndex (UTC)"
+    dtypes: "float64"
