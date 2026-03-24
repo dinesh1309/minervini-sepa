@@ -17,10 +17,10 @@ sys.path.insert(0, '.')
 
 from src.tools.market_data import get_stock_data
 from src.tools.technical_analysis import calculate_moving_averages, check_trend_template
+from src.tools.fundamental_analysis import get_fundamentals
 from src.tools.pattern_detection import detect_vcp, identify_pivot
 from src.tools.market_condition import detect_market_condition, format_condition_emoji
 from src.alerts.discord_alerts import send_scan_alerts
-import yfinance as yf
 
 # Dinesh's 10 watchlist stocks
 WATCHLIST = {
@@ -45,129 +45,6 @@ INDICES = [
     {"symbol": "^NSEI", "name": "Nifty 50", "market": "india"},
     {"symbol": "^GSPC", "name": "S&P 500", "market": "us"},
 ]
-
-
-def get_fundamentals(symbol, market):
-    """Fetch SEPA-relevant fundamental data from yfinance."""
-    try:
-        suffix = ".NS" if market == "india" else ""
-        full = f"{symbol}{suffix}"
-        ticker = yf.Ticker(full)
-
-        info = ticker.info or {}
-
-        # Quarterly EPS from income statement
-        quarterly_eps = []
-        try:
-            qi = ticker.quarterly_income_stmt
-            if qi is not None and not qi.empty:
-                for col_name in ['Diluted EPS', 'Basic EPS']:
-                    if col_name in qi.index:
-                        eps_row = qi.loc[col_name].dropna().head(6)
-                        for date, val in eps_row.items():
-                            quarterly_eps.append({
-                                "quarter": str(date)[:10],
-                                "eps": round(float(val), 2)
-                            })
-                        break
-        except Exception:
-            pass
-
-        # Calculate YoY % change for each quarter (Minervini: primary metric)
-        eps_yoy_changes = []
-        if len(quarterly_eps) >= 5:
-            for i in range(min(4, len(quarterly_eps) - 4)):
-                current_q = quarterly_eps[i]
-                # Find quarter ~4 positions later (year-ago)
-                yago_idx = i + 4
-                if yago_idx < len(quarterly_eps):
-                    year_ago_q = quarterly_eps[yago_idx]
-                    yago_eps = year_ago_q["eps"]
-                    curr_eps = current_q["eps"]
-                    if yago_eps and yago_eps <= 0 and curr_eps > 0:
-                        eps_yoy_changes.append({
-                            "quarter": current_q["quarter"],
-                            "current": curr_eps,
-                            "year_ago": yago_eps,
-                            "yoy_pct": None,
-                            "note": "EASY COMP (year-ago negative)"
-                        })
-                    elif yago_eps and 0 < yago_eps < 1.0:
-                        pct = round(((curr_eps - yago_eps) / yago_eps) * 100, 1)
-                        eps_yoy_changes.append({
-                            "quarter": current_q["quarter"],
-                            "current": curr_eps,
-                            "year_ago": yago_eps,
-                            "yoy_pct": pct,
-                            "note": "EASY COMP (year-ago very low)"
-                        })
-                    elif yago_eps and yago_eps > 0:
-                        pct = round(((curr_eps - yago_eps) / yago_eps) * 100, 1)
-                        eps_yoy_changes.append({
-                            "quarter": current_q["quarter"],
-                            "current": curr_eps,
-                            "year_ago": yago_eps,
-                            "yoy_pct": pct
-                        })
-
-        # EPS acceleration check (Minervini: each quarter's YoY should be >= previous)
-        eps_accelerating = False
-        eps_decelerating_count = 0
-        if len(eps_yoy_changes) >= 2:
-            for i in range(len(eps_yoy_changes) - 1):
-                curr_pct = eps_yoy_changes[i].get("yoy_pct")
-                prev_pct = eps_yoy_changes[i + 1].get("yoy_pct")
-                if curr_pct is not None and prev_pct is not None:
-                    if curr_pct < prev_pct:
-                        eps_decelerating_count += 1
-            if eps_yoy_changes[0].get("yoy_pct") is not None and eps_yoy_changes[-1].get("yoy_pct") is not None:
-                eps_accelerating = eps_yoy_changes[0]["yoy_pct"] > eps_yoy_changes[-1]["yoy_pct"]
-
-        # Latest quarter EPS growth
-        eps_growth_yoy = eps_yoy_changes[0]["yoy_pct"] if eps_yoy_changes and eps_yoy_changes[0].get("yoy_pct") is not None else None
-
-        # SEPA checks
-        latest_eps_negative = quarterly_eps[0]["eps"] < 0 if quarterly_eps else False
-        min_growth_pass = eps_growth_yoy is not None and eps_growth_yoy >= 20
-
-        # Revenue growth
-        rev_growth = info.get('revenueGrowth')
-        rev_growth_pct = round(rev_growth * 100, 1) if rev_growth else None
-
-        # Earnings growth (summary)
-        earn_growth = info.get('earningsGrowth')
-        earn_growth_pct = round(earn_growth * 100, 1) if earn_growth else None
-
-        return {
-            "market_cap": info.get('marketCap'),
-            "pe_ratio": round(info.get('trailingPE', 0), 1) if info.get('trailingPE') else None,
-            "eps_ttm": info.get('trailingEps'),
-            "roe": round(info.get('returnOnEquity', 0) * 100, 1) if info.get('returnOnEquity') else None,
-            "debt_equity": round(info.get('debtToEquity', 0), 1) if info.get('debtToEquity') else None,
-            "profit_margin": round(info.get('profitMargins', 0) * 100, 1) if info.get('profitMargins') else None,
-            "revenue_growth": rev_growth_pct,
-            "earnings_growth": earn_growth_pct,
-            "eps_growth_yoy_calc": eps_growth_yoy,
-            "institutional_pct": round(info.get('heldPercentInstitutions', 0) * 100, 1) if info.get('heldPercentInstitutions') else None,
-            "sector": info.get('sector'),
-            "industry": info.get('industry'),
-            "quarterly_eps": quarterly_eps[:6],
-            "eps_yoy_changes": eps_yoy_changes,
-            "eps_accelerating": eps_accelerating,
-            "eps_decel_count": eps_decelerating_count,
-            "latest_eps_negative": latest_eps_negative,
-            "min_growth_pass": min_growth_pass,
-            # SEPA EPS verdict
-            "eps_verdict": "REJECT (negative EPS)" if latest_eps_negative
-                else "REJECT (2+ decel)" if eps_decelerating_count >= 2
-                else "PASS (accelerating)" if eps_accelerating and min_growth_pass
-                else "PASS (>20% growth)" if min_growth_pass
-                else "CAUTION (weak growth)" if eps_growth_yoy is not None and eps_growth_yoy > 0
-                else "INSUFFICIENT DATA" if not eps_yoy_changes
-                else "FAIL",
-        }
-    except Exception as e:
-        return {"error": str(e)}
 
 
 def scan_stock(symbol, name, market, pivot=None, stop=None, benchmark_df=None):
